@@ -67,15 +67,19 @@ export interface PoolDetails {
     launchMigratePool: boolean;
 }
 
-interface PoolListResponse {
+interface ApiResponse<T> {
+    id: string;
+    success: boolean;
+    data: T;
+}
+
+export interface PoolListResponse {
     count: number;
     data: PoolDetails[];
     hasNextPage: boolean;
 }
 
-interface TokenInfoResponse {
-    [mintAddress: string]: TokenInfo;
-}
+export type TokenInfoResponse = TokenInfo[];
 
 export async function getPoolList(
     page: number = 1,
@@ -85,7 +89,7 @@ export async function getPoolList(
 ): Promise<PoolListResponse> {
     try {
         const url = `https://api-v3.raydium.io/pools/info/list`;
-        const response = await axios.get(url, {
+        const response = await axios.get<ApiResponse<PoolListResponse>>(url, {
             params: {
                 poolType: 'concentrated',
                 poolSortField: sortField,
@@ -94,22 +98,32 @@ export async function getPoolList(
                 page
             }
         });
-        return response.data;
+
+        if (!response.data.success) {
+            throw new Error('API request was not successful');
+        }
+
+        return response.data.data;
     } catch (error) {
         console.error('Error fetching pool list:', error);
         throw new Error('Failed to fetch Raydium pool list');
     }
 }
 
-export async function getPoolDetails(poolIds: string[]): Promise<PoolDetails[]> {
+export async function getPoolDetails(poolIds: string[]): Promise<(PoolDetails | null)[]> {
     try {
         const url = `https://api-v3.raydium.io/pools/info/ids`;
-        const response = await axios.get(url, {
+        const response = await axios.get<ApiResponse<(PoolDetails | null)[]>>(url, {
             params: {
                 ids: poolIds.join(',')
             }
         });
-        return response.data;
+
+        if (!response.data.success) {
+            throw new Error('API request was not successful');
+        }
+
+        return response.data.data;
     } catch (error) {
         console.error('Error fetching pool details:', error);
         throw new Error('Failed to fetch Raydium pool details');
@@ -120,13 +134,13 @@ export async function searchPoolsByMint(
     mint1: string,
     mint2?: string,
     page: number = 1,
-    pageSize: number = 10,
+    pageSize: number = 1,
     sortField: string = 'default',
     sortType: 'asc' | 'desc' = 'desc'
 ): Promise<PoolListResponse> {
     try {
         const url = `https://api-v3.raydium.io/pools/info/mint`;
-        const response = await axios.get(url, {
+        const response = await axios.get<ApiResponse<PoolListResponse>>(url, {
             params: {
                 mint1,
                 mint2: mint2 || '',
@@ -137,7 +151,12 @@ export async function searchPoolsByMint(
                 page
             }
         });
-        return response.data;
+
+        if (!response.data.success) {
+            throw new Error('API request was not successful');
+        }
+
+        return response.data.data;
     } catch (error) {
         console.error('Error searching pools by mint:', error);
         throw new Error('Failed to search Raydium pools by mint');
@@ -147,17 +166,34 @@ export async function searchPoolsByMint(
 export async function getTokenInfoByMints(mints: string[]): Promise<TokenInfoResponse> {
     try {
         const url = `https://api-v3.raydium.io/mint/ids`;
-        const response = await axios.get(url, {
+        const response = await axios.get<ApiResponse<TokenInfoResponse>>(url, {
             params: {
                 mints: mints.join(',')
             }
         });
-        return response.data;
+
+        if (!response.data.success) {
+            throw new Error('API request was not successful');
+        }
+
+        return response.data.data;
     } catch (error) {
         console.error('Error fetching token info:', error);
         throw new Error('Failed to fetch token information');
     }
 }
 
+// (async () => {
+//     const response = await getPoolList();
+//     console.log(JSON.stringify(response, null, 2));
 
+//     const poolDetails = await getPoolDetails(['3h2e43PunVA5K34vwKCLHWhZF4aZpyaC9RmxvshGAQpL']);
+//     console.log(JSON.stringify(poolDetails, null, 2));
+
+//     const tokenInfo = await getTokenInfoByMints(['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R']);
+//     console.log(JSON.stringify(tokenInfo, null, 2));
+
+//     const poolList = await searchPoolsByMint('4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R');
+//     console.log(JSON.stringify(poolList, null, 2));
+// })();
 

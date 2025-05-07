@@ -3,6 +3,9 @@ import TelegramBot from 'node-telegram-bot-api';
 import { handleStartCommand } from './commands/start';
 import { handleWalletCommand } from './commands/wallet';
 import { handleSwapCommand } from './commands/swap';
+import { handlePoolsListCommand, handlePoolsCallback } from './commands/poolsList';
+import { handlePoolByIdCommand } from './commands/poolById';
+import { handlePoolByTokenCommand } from './commands/poolByToken';
 import { SqliteUserStore } from '../storage/sqliteUserStore';
 import { decrypt } from '../utils/encryption';
 import { getSolBalance } from '../solana/utils';
@@ -21,25 +24,21 @@ export function initializeBot(token: string) {
     bot.setMyCommands([
         { command: 'start', description: 'Start the bot and set up your wallet' },
         { command: 'wallet', description: 'View your wallet information' },
-        { command: 'swap', description: 'Swap tokens using Jupiter' }
+        { command: 'swap', description: 'Swap tokens using Jupiter' },
+        { command: 'pools_list', description: 'List all available Raydium CLMM pools' },
+        { command: 'pool_by_id', description: 'Get details for a specific pool' },
+        { command: 'pool_by_token', description: 'Find pools containing a specific token' }
     ]);
 
-    // Listen for the /start command
-    bot.onText(/\/start/, (msg) => {
-        handleStartCommand(bot, msg); // Delegate to the command handler
-    });
+    // Listen for commands
+    bot.onText(/\/start/, (msg) => handleStartCommand(bot, msg));
+    bot.onText(/\/wallet/, (msg) => handleWalletCommand(bot, msg));
+    bot.onText(/\/swap/, (msg) => handleSwapCommand(bot, msg));
+    bot.onText(/\/pools_list/, (msg) => handlePoolsListCommand(bot, msg));
+    bot.onText(/\/pool_by_id/, (msg) => handlePoolByIdCommand(bot, msg));
+    bot.onText(/\/pool_by_token/, (msg) => handlePoolByTokenCommand(bot, msg));
 
-    // Listen for the /wallet command
-    bot.onText(/\/wallet/, (msg) => {
-        handleWalletCommand(bot, msg); // Delegate to the wallet command handler
-    });
-
-    // Listen for the /swap command
-    bot.onText(/\/swap/, (msg) => {
-        handleSwapCommand(bot, msg); // Delegate to the swap command handler
-    });
-
-    // Handle callback queries for wallet actions
+    // Handle callback queries
     bot.on('callback_query', async (query) => {
         const chatId = query.message?.chat.id;
         const userId = query.from?.id.toString();
@@ -47,20 +46,19 @@ export function initializeBot(token: string) {
 
         if (!chatId || !userId || !messageId) {
             console.error('Missing chatId, userId, or messageId in callback query');
-            // Answer callback even if we can't proceed, to stop the loading indicator
             if (query.id) await bot.answerCallbackQuery(query.id, { text: 'Error processing request.' });
             return;
         }
 
-        let ackText = 'Processing...'; // Default acknowledgement text
+        let ackText = 'Processing...';
 
         try {
+            // Handle wallet-related callbacks
             if (query.data === 'export_private_key') {
                 const user = await userStore.getUser(userId);
                 if (user && user.encryptedPrivateKey) {
                     try {
                         const privateKey = decrypt(user.encryptedPrivateKey);
-                        // Send as a new message for security/clarity
                         await bot.sendMessage(chatId, `⚠️ *Warning*: Never share your private key with anyone!\n\n\`${privateKey}\``, { parse_mode: 'Markdown' });
                         ackText = 'Private key sent.';
                     } catch (err) {
@@ -72,7 +70,6 @@ export function initializeBot(token: string) {
                     ackText = 'Key not found.';
                 }
             } else if (query.data === 'close_wallet_info') {
-                // Edit the message to remove the inline keyboard
                 await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId });
                 ackText = 'Closed.';
             } else if (query.data === 'refresh_wallet_info') {
@@ -93,45 +90,42 @@ export function initializeBot(token: string) {
                         });
                         ackText = 'Balance refreshed.';
                     } catch (editError: any) {
-                        // Handle the "message is not modified" error gracefully
                         if (editError.message && editError.message.includes('message is not modified')) {
                             ackText = 'Balance is current.';
                         } else {
-                            // Re-throw other errors to be caught by the outer try-catch
                             throw editError;
                         }
                     }
                 } else {
-                    // Handle case where user or wallet address isn't found (maybe they ran /start again?)
                     await bot.editMessageText('Could not refresh balance. Please try /wallet again.', {
                         chat_id: chatId,
                         message_id: messageId,
-                        reply_markup: { inline_keyboard: [] } // Remove keyboard
+                        reply_markup: { inline_keyboard: [] }
                     });
                     ackText = 'Refresh failed.';
                 }
             }
+            // Handle pool-related callbacks
+            else if (query.data?.startsWith('pools_') || query.data?.startsWith('select_pool_')) {
+                await handlePoolsCallback(bot, query);
+                ackText = 'Pool action processed.';
+            }
         } catch (error) {
             console.error(`Error handling callback query (${query.data}) for user ${userId}:`, error);
             ackText = 'An error occurred.';
-            // Optionally send an error message to the chat
-            // await bot.sendMessage(chatId, 'An internal error occurred processing your request.');
         }
 
         // Acknowledge the callback
         await bot.answerCallbackQuery(query.id, { text: ackText });
     });
 
-    // Add more listeners for other commands (/wallet, /lp, etc.) here
-
     bot.on('polling_error', (error: Error) => {
         console.error('Polling error:', error.message);
-        // Handle specific errors if needed
     });
 
     console.log('Telegram Bot polling started...');
 
-    return bot; // Return the bot instance if needed elsewhere
+    return bot;
 }
 
 export class Bot {

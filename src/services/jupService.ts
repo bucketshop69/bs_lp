@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js';
-import { getUserKeypair } from './getUserWallet';
 import { getTokenBalance } from '../solana/utils';
 
 interface JupiterQuoteParams {

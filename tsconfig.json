@@ -1,0 +1,24 @@
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2016", // Or newer like ES2020
+    "module": "CommonJS", // Standard for Node.js
+    "outDir": "./dist", // Where compiled JS will go
+    "rootDir": "./src", // Where your TS source code is
+    "strict": true, // Enable strict type checking
+    "esModuleInterop": true, // Allows imports from commonjs modules
+    "skipLibCheck": true, // Skip type checking of declaration files
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true, // Allow importing JSON files
+    "sourceMap": true // Generate source maps for debugging
+    // "baseUrl": "./src", // Optional: if you want shorter import paths
+    // "paths": { ... } // Optional: configure path aliases
+  },
+  "include": [
+    "src/**/*"
+  ], // Which files to include in compilation
+  "exclude": [
+    "node_modules",
+    "**/*.spec.ts"
+  ] // Which files to exclude
+}

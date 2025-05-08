@@ -3,7 +3,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { handleStartCommand } from './commands/start';
 import { handleWalletCommand } from './commands/wallet';
 import { handleSwapCommand } from './commands/swap';
-import { handlePoolsListCommand, handlePoolsCallback } from './commands/poolsList';
+import { handlePoolsListCommand, handlePoolsCallback, handlePoolNumberCommand } from './commands/poolsList';
 import { handlePoolByIdCommand } from './commands/poolById';
 import { handlePoolByTokenCommand } from './commands/poolByToken';
 import { SqliteUserStore } from '../storage/sqliteUserStore';
@@ -37,6 +37,7 @@ export function initializeBot(token: string) {
     bot.onText(/\/pools_list/, (msg) => handlePoolsListCommand(bot, msg));
     bot.onText(/\/pool_by_id/, (msg) => handlePoolByIdCommand(bot, msg));
     bot.onText(/\/pool_by_token/, (msg) => handlePoolByTokenCommand(bot, msg));
+    bot.onText(/^\/(\d+)$/, (msg, match) => handlePoolNumberCommand(bot, msg, match));
 
     // Handle callback queries
     bot.on('callback_query', async (query) => {

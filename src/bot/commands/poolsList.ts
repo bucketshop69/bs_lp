@@ -124,21 +124,23 @@ function formatPoolsMessage(pools: PoolDetails[], currentPage: number, totalPage
 
     pageItems.forEach((pool, index) => {
         const poolNumber = startIdx + index + 1;
-        message += `${poolNumber}. <b>${pool.mintA.symbol}/${pool.mintB.symbol}</b>\n`;
+        message += `/${poolNumber} <b>${pool.mintA.symbol}/${pool.mintB.symbol}</b>\n`;
         message += `   Volume: $${formatNumber(pool.day.volume)}\n`;
         message += `   Fees: $${formatNumber(pool.day.volumeFee)}\n`;
         message += `   APR: ${pool.day.apr.toFixed(2)}%\n`;
         message += `   TVL: $${formatNumber(pool.tvl)}\n\n`;
     });
 
-    message += `Page ${currentPage}/${totalPages}`;
+    message += `Page ${currentPage}/${totalPages}\n\n`;
+    message += '💡 <b>Click on the numbers</b> (e.g., /1, /2) to see detailed pool information';
     return message;
 }
 
-function createPoolsKeyboard(pools: PoolDetails[], currentPage: number, totalPages: number): TelegramBot.InlineKeyboardMarkup {
+function createPoolsKeyboard(pools: PoolDetails[], currentPage: number, totalPages: number):
+    TelegramBot.InlineKeyboardMarkup {
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
-    // Only add pagination controls as a single row
     const paginationRow: TelegramBot.InlineKeyboardButton[] = [];
+
     if (currentPage > 1) {
         paginationRow.push({
             text: '◀️ Prev',
@@ -312,37 +314,41 @@ function createPoolOptionsKeyboard(poolId: string): TelegramBot.InlineKeyboardMa
     };
 }
 
-// Export a handler for /pool X selection
-export async function handlePoolNumberCommand(
-    bot: TelegramBot,
-    msg: TelegramBot.Message,
-    match: RegExpMatchArray | null
-) {
+// Add command handler for pool numbers (e.g., /1, /2)
+export function handlePoolNumberCommand(bot: TelegramBot, msg: TelegramBot.Message, match: RegExpMatchArray | null) {
     const chatId = msg.chat.id;
     const userId = msg.from?.id.toString();
-    if (!userId) return;
+
+    if (!userId || !match) {
+        console.log('Missing userId or match');
+        return;
+    }
+
     const state = userStates.get(userId);
+
     if (!state) {
-        await bot.sendMessage(chatId, '❌ Please use /pools_list to view pools first.');
+        bot.sendMessage(chatId, '❌ Please use /pools_list to view pools first.');
         return;
     }
-    if (!match || !match[1]) {
-        await bot.sendMessage(chatId, '❌ Invalid pool number.');
-        return;
-    }
+
     const poolIndex = parseInt(match[1], 10) - 1;
+
     if (isNaN(poolIndex) || poolIndex < 0 || poolIndex >= state.pools.length) {
-        await bot.sendMessage(chatId, '❌ Invalid pool number.');
+        bot.sendMessage(chatId, '❌ Invalid pool number.');
         return;
     }
+
     const pool = state.pools[poolIndex];
+
     if (!pool) {
-        await bot.sendMessage(chatId, '❌ Pool not found.');
+        bot.sendMessage(chatId, '❌ Pool not found.');
         return;
     }
+
     const message = formatPoolDetails(pool);
     const keyboard = createPoolOptionsKeyboard(pool.id);
-    await bot.sendMessage(chatId, message, {
+
+    bot.sendMessage(chatId, message, {
         parse_mode: 'HTML',
         reply_markup: keyboard
     });

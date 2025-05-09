@@ -182,18 +182,3 @@ export async function getTokenInfoByMints(mints: string[]): Promise<TokenInfoRes
         throw new Error('Failed to fetch token information');
     }
 }
-
-// (async () => {
-//     const response = await getPoolList();
-//     console.log(JSON.stringify(response, null, 2));
-
-//     const poolDetails = await getPoolDetails(['3h2e43PunVA5K34vwKCLHWhZF4aZpyaC9RmxvshGAQpL']);
-//     console.log(JSON.stringify(poolDetails, null, 2));
-
-//     const tokenInfo = await getTokenInfoByMints(['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R']);
-//     console.log(JSON.stringify(tokenInfo, null, 2));
-
-//     const poolList = await searchPoolsByMint('4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R');
-//     console.log(JSON.stringify(poolList, null, 2));
-// })();
-

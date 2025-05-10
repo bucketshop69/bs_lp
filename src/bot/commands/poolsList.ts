@@ -124,14 +124,10 @@ function formatPoolsMessage(pools: PoolDetails[], currentPage: number, totalPage
 
     pageItems.forEach((pool, index) => {
         const poolNumber = startIdx + index + 1;
-        message += `/${poolNumber} <b>${pool.mintA.symbol}/${pool.mintB.symbol}</b>\n`;
-        message += `   Volume: $${formatNumber(pool.day.volume)}\n`;
-        message += `   Fees: $${formatNumber(pool.day.volumeFee)}\n`;
-        message += `   APR: ${pool.day.apr.toFixed(2)}%\n`;
-        message += `   TVL: $${formatNumber(pool.tvl)}\n\n`;
+        message += `/${poolNumber} <b>${pool.mintA.symbol}/${pool.mintB.symbol}</b> | Vol: $${formatNumber(pool.day.volume)} | Fees: $${formatNumber(pool.day.volumeFee)} | TVL: $${formatNumber(pool.tvl)}\n`;
     });
 
-    message += `Page ${currentPage}/${totalPages}\n\n`;
+    message += `\nPage ${currentPage}/${totalPages}\n\n`;
     message += '💡 <b>Click on the numbers</b> (e.g., /1, /2) to see detailed pool information';
     return message;
 }

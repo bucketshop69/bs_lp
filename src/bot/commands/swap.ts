@@ -17,30 +17,30 @@ export async function handleSwapCommand(bot: TelegramBot, msg: TelegramBot.Messa
 
     try {
         // Get user's keypair using the getUserKeypair function
-        const keypair = await getUserKeypair(userId);
+        // const keypair = await getUserKeypair(userId);
 
-        // Get SOL balance
-        const solBalance = await getTokenBalance(
-            keypair.publicKey.toString(),
-            'So11111111111111111111111111111111111111112' // SOL mint address
-        );
+        // // Get SOL balance
+        // const solBalance = await getTokenBalance(
+        //     keypair.publicKey.toString(),
+        //     'So11111111111111111111111111111111111111112' // SOL mint address
+        // );
 
-        // Example swap: SOL to USDC
-        const signature = await swap({
-            inputMint: 'So11111111111111111111111111111111111111112', // SOL
-            outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-            amount: '1000000', // 0.001 SOL
-            slippageBps: 50,
-            prioritizationFeeLamports: {
-                maxLamports: 1000000,
-                priorityLevel: "veryHigh"
-            }
-        }, keypair, connection);
+        // // Example swap: SOL to USDC
+        // const signature = await swap({
+        //     inputMint: 'So11111111111111111111111111111111111111112', // SOL
+        //     outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+        //     amount: '1000000', // 0.001 SOL
+        //     slippageBps: 50,
+        //     prioritizationFeeLamports: {
+        //         maxLamports: 1000000,
+        //         priorityLevel: "veryHigh"
+        //     }
+        // }, keypair, connection);
 
-        await bot.sendMessage(
-            chatId,
-            `✅ Swap completed successfully!\n\nTransaction: https://solscan.io/tx/${signature}`
-        );
+        // await bot.sendMessage(
+        //     chatId,
+        //     `✅ Swap completed successfully!\n\nTransaction: https://solscan.io/tx/${signature}`
+        // );
 
     } catch (error) {
         console.error('Swap command error:', error);

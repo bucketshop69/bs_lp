@@ -142,7 +142,8 @@ export const fetchAllPositionsInfo = async (userId: string) => {
             else poolRewardInfos.push(rewardMintBFee)
 
             return {
-                pool: `${poolInfo.mintA.symbol} - ${poolInfo.mintB.symbol}`,
+                name: `${poolInfo.mintA.symbol} - ${poolInfo.mintB.symbol}`,
+                poolId: poolInfo.id,
                 nft: positionData.nftMint.toBase58(),
                 priceLower: priceLower.price.toString(),
                 priceUpper: priceUpper.price.toString(),
@@ -158,13 +159,3 @@ export const fetchAllPositionsInfo = async (userId: string) => {
 
     return positionsInfo
 }
-
-// Example usage
-// (async () => {
-//     try {
-//         const allPositionsInfo = await fetchAllPositionsInfo("7883754831")
-//         console.log('All Positions Info:', JSON.stringify(allPositionsInfo, null, 2))
-//     } catch (error) {
-//         console.error('Error fetching positions info:', error)
-//     }
-// })()

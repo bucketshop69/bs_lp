@@ -34,32 +34,38 @@ export async function handleMyPositionsCommand(bot: TelegramBot, msg: TelegramBo
                 return;
             }
 
-            const positionsText = positions.map((pos, index) => {
-                const poolTokens = pos.pool.split(' - ');
-                const tokenAName = poolTokens[0] || 'TokenA'; // Fallback for safety
-                const tokenBName = poolTokens[1] || 'TokenB'; // Fallback for safety
+            const positionsText = await Promise.all(positions.map(async (pos, index) => {
+                const poolTokens = pos.name.split(' - ');
+                const tokenAName = poolTokens[0] || 'TokenA';
+                const tokenBName = poolTokens[1] || 'TokenB';
 
                 const rewardsLines = pos.rewardInfos
                     .map(reward => `  • ${Number(reward.amount).toFixed(4)} ${reward.mint}`)
                     .join('\n');
 
                 const positionDetails =
-                    `🔹 <b>Position ${index + 1}</b>
-Pool: ${pos.pool}
-Price Range: ${Number(pos.priceLower).toFixed(4)} - ${Number(pos.priceUpper).toFixed(4)}
-💰 <b>Pooled Amounts:</b>
-  • ${Number(pos.pooledAmountA).toFixed(4)} ${tokenAName}
-  • ${Number(pos.pooledAmountB).toFixed(4)} ${tokenBName}
-🏆 <b>Rewards:</b>
-${rewardsLines.length > 0 ? rewardsLines : '  • No pending rewards'}
-🔧 <b>Actions:</b>
-  /close_position
-  /claim_fees`; // Note: template literal lines implicitly end with \n if not the last line of the literal
-                return positionDetails;
-            }).join('\n\n---------------\n\n'); // Divider with blank lines above and below
+                    `🔹 <b>Position ${index + 1}</b>\nPool: ${pos.name}\nPrice Range: ${Number(pos.priceLower).toFixed(4)} - ${Number(pos.priceUpper).toFixed(4)}\n💰 <b>Pooled Amounts:</b>\n  • ${Number(pos.pooledAmountA).toFixed(4)} ${tokenAName}\n  • ${Number(pos.pooledAmountB).toFixed(4)} ${tokenBName}\n🏆 <b>Rewards:</b>\n${rewardsLines.length > 0 ? rewardsLines : '  • No pending rewards'}\n🔧 <b>Actions:</b>`;
 
+                // Inline keyboard for closing position
+                const inlineKeyboard = {
+                    inline_keyboard: [[
+                        { text: `Close Position ${index + 1}`, callback_data: `close_position_${index + 1}` },
+                        { text: `Claim Fees`, callback_data: `claim_fees_${index + 1}` }
+                    ]]
+                };
+
+                // Send the position details with the inline keyboard
+                await bot.sendMessage(chatId, positionDetails, {
+                    parse_mode: 'HTML',
+                    reply_markup: inlineKeyboard
+                });
+
+                return null; // We don't need to collect text for editMessageText
+            }));
+
+            // After sending all positions, edit the loading message to a summary or remove it
             await bot.editMessageText(
-                `<b>Your Raydium CLMM Positions</b>\n\n${positionsText}`,
+                `<b>Your Raydium CLMM Positions</b>\n\n(See each position above for actions)`,
                 {
                     chat_id: chatId,
                     message_id: loadingMsg.message_id,

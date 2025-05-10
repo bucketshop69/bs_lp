@@ -7,11 +7,14 @@ import { handlePoolsListCommand, handlePoolsCallback, handlePoolNumberCommand } 
 import { handlePoolByIdCommand } from './commands/poolById';
 import { handlePoolByTokenCommand } from './commands/poolByToken';
 import { handleMyPositionsCommand } from './commands/myPositions';
+import { handleClosePositionCommand } from './commands/closePosition';
 import { SqliteUserStore } from '../storage/sqliteUserStore';
 import { decrypt } from '../utils/encryption';
 import { getSolBalance } from '../solana/utils';
 import { getWalletKeyboard } from './keyboards';
 import { handleSingleSidedLPCallback, handleAmountInput, handleUpperPriceInput, handleConfirmation, handleCancellation } from './commands/lpCommands';
+import { harvestPositionRewards } from '../services/raydiumClmm/claimFees';
+import { fetchAllPositionsInfo } from '../services/raydiumClmm/myPosition';
 
 const userStore = new SqliteUserStore();
 
@@ -117,6 +120,7 @@ export function initializeBot(token: string) {
         { command: 'pools_list', description: 'List all available Raydium CLMM pools' },
         { command: 'pool_by_id', description: 'Get details for a specific pool' },
         { command: 'my_positions', description: 'View your Raydium CLMM positions' },
+        { command: 'close_position', description: 'Close a specific Raydium CLMM position' },
         // { command: 'pool_by_token', description: 'Find pools containing a specific token' }
     ]);
 
@@ -128,6 +132,7 @@ export function initializeBot(token: string) {
     bot.onText(/\/pool_by_id/, (msg) => handlePoolByIdCommand(bot, msg));
     bot.onText(/\/pool_by_token/, (msg) => handlePoolByTokenCommand(bot, msg));
     bot.onText(/\/my_positions/, (msg) => handleMyPositionsCommand(bot, msg));
+    bot.onText(/\/close_position/, (msg) => handleClosePositionCommand(bot, msg));
     bot.onText(/^\/(\d+)$/, (msg, match) => handlePoolNumberCommand(bot, msg, match));
 
     // Handle callback queries
@@ -145,8 +150,21 @@ export function initializeBot(token: string) {
         let ackText = 'Processing...';
 
         try {
+            // Handle close position button
+            if (query.data?.startsWith('close_position_')) {
+                const positionNumber = query.data.split('_')[2];
+                // Synthesize a message object for handleClosePositionCommand
+                // Only chat.id, from.id, and text are used, so this is safe
+                const syntheticMsg = {
+                    chat: { id: chatId },
+                    from: { id: Number(userId) },
+                    text: `/close_position ${positionNumber}`
+                };
+                await handleClosePositionCommand(bot, syntheticMsg as any);
+                ackText = `Closing position ${positionNumber}...`;
+            }
             // Handle LP-related callbacks
-            if (query.data?.startsWith('lp_single_')) {
+            else if (query.data?.startsWith('lp_single_')) {
                 await handleSingleSidedLPCallback(bot, query);
                 ackText = 'Starting LP setup...';
             }
@@ -206,6 +224,33 @@ export function initializeBot(token: string) {
             else if (query.data?.startsWith('pools_') || query.data?.startsWith('select_pool_')) {
                 await handlePoolsCallback(bot, query);
                 ackText = 'Pool action processed.';
+            }
+            // Handle claim fees button
+            else if (query.data?.startsWith('claim_fees_')) {
+                const positionNumber = parseInt(query.data.split('_')[2], 10);
+                try {
+                    // Fetch user positions to get the correct nftMint
+                    const userIdStr = userId.toString();
+                    const positions = await fetchAllPositionsInfo(userIdStr);
+                    if (!positions || positionNumber < 1 || positionNumber > positions.length) {
+                        await bot.sendMessage(chatId, '❌ Invalid position number.');
+                        return;
+                    }
+                    const position = positions[positionNumber - 1];
+                    const nftMint = position.nft;
+                    // Notify user that claiming is in progress
+                    await bot.sendMessage(chatId, '🔄 Claiming fees for your position...');
+                    const txIds = await harvestPositionRewards(nftMint, userIdStr);
+                    if (txIds && txIds.length > 0) {
+                        await bot.sendMessage(chatId, `✅ Fees claimed successfully!\nTransaction(s):\n${txIds.map(txId => `https://solscan.io/tx/${txId}`).join('\n')}`);
+                    } else {
+                        await bot.sendMessage(chatId, '✅ Fees claimed, but no transaction IDs returned.');
+                    }
+                } catch (error) {
+                    console.error('Error claiming fees:', error);
+                    await bot.sendMessage(chatId, '❌ Failed to claim fees. Please try again later.');
+                }
+                ackText = `Claiming fees for position ${positionNumber}...`;
             }
         } catch (error) {
             console.error('Error handling callback query:', error);

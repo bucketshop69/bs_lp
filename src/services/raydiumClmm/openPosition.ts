@@ -23,7 +23,7 @@ export const createPosition = async ({
     inputAmount,
     startPrice,
     endPrice,
-    slippage = 15,
+    slippage = 5,
     computeBudgetUnits = 600000,
     computeBudgetMicroLamports = 100000,
     userId

@@ -6,28 +6,118 @@ import { handleSwapCommand } from './commands/swap';
 import { handlePoolsListCommand, handlePoolsCallback, handlePoolNumberCommand } from './commands/poolsList';
 import { handlePoolByIdCommand } from './commands/poolById';
 import { handlePoolByTokenCommand } from './commands/poolByToken';
+import { handleMyPositionsCommand } from './commands/myPositions';
 import { SqliteUserStore } from '../storage/sqliteUserStore';
 import { decrypt } from '../utils/encryption';
 import { getSolBalance } from '../solana/utils';
 import { getWalletKeyboard } from './keyboards';
+import { handleSingleSidedLPCallback, handleAmountInput, handleUpperPriceInput, handleConfirmation, handleCancellation } from './commands/lpCommands';
 
 const userStore = new SqliteUserStore();
 
+let botInstance: TelegramBot | null = null;
+let isShuttingDown = false;
+let retryCount = 0;
+const MAX_RETRIES = 5;
+const RETRY_DELAY_MS = 5000; // 5 seconds
+let pollingRestartTimer: NodeJS.Timeout | null = null;
+
+
+// Clean up resources function
+function cleanupResources() {
+    if (pollingRestartTimer) {
+        clearTimeout(pollingRestartTimer);
+        pollingRestartTimer = null;
+    }
+
+    if (botInstance) {
+        try {
+            isPolling = false;
+            botInstance.stopPolling();
+        } catch (err) {
+            console.error('Error stopping polling:', err);
+        }
+        botInstance = null;
+    }
+
+    retryCount = 0;
+    isShuttingDown = false;
+}
+let isPolling = false;
+
+function startBotPolling(bot: TelegramBot) {
+    if (isPolling) {
+        console.log('Bot is already polling');
+        return;
+    }
+
+    console.log('Starting Telegram Bot polling...');
+    bot.startPolling().then(() => {
+        isPolling = true;
+        console.log('Bot polling started successfully');
+    }).catch((error) => {
+        console.error('Error starting bot polling:', error);
+        isPolling = false;
+
+        // If it's a conflict error, try to stop and restart
+        if (error.response?.body?.error_code === 409 ||
+            (error.message && error.message.includes('409 Conflict'))) {
+            console.log('Bot already polling, attempting to stop and restart...');
+
+            bot.stopPolling().then(() => {
+                // Wait a bit before restarting
+                setTimeout(() => {
+                    bot.startPolling().then(() => {
+                        isPolling = true;
+                        console.log('Bot polling restarted successfully');
+                    }).catch(err => {
+                        console.error('Failed to restart polling:', err);
+                    });
+                }, 2000);
+            }).catch(stopErr => {
+                console.error('Failed to stop polling:', stopErr);
+            });
+        }
+    });
+}
 export function initializeBot(token: string) {
     if (!token) {
         throw new Error('Telegram Bot Token is required!');
     }
 
-    const bot = new TelegramBot(token, { polling: true });
+    // Prevent multiple initializations
+    if (isShuttingDown) {
+        console.log('Bot is currently shutting down, waiting...');
+        return null;
+    }
+
+    // Clean up any existing bot instance
+    cleanupResources();
+
+
+    // Create new bot instance with more robust configuration
+    const bot = new TelegramBot(token, {
+        polling: {
+            interval: 1000,
+            autoStart: false,
+            params: {
+                timeout: 30
+            }
+        }
+    });
+
+    // Set botInstance after creation
+    botInstance = bot;
 
     // Set up bot commands menu
     bot.setMyCommands([
         { command: 'start', description: 'Start the bot and set up your wallet' },
         { command: 'wallet', description: 'View your wallet information' },
-        { command: 'swap', description: 'Swap tokens using Jupiter' },
+        // { command: 'swap', description: 'Swap tokens using Jupiter' },
         { command: 'pools_list', description: 'List all available Raydium CLMM pools' },
         { command: 'pool_by_id', description: 'Get details for a specific pool' },
-        { command: 'pool_by_token', description: 'Find pools containing a specific token' }
+        { command: 'my_positions', description: 'View your Raydium CLMM positions' },
+        // { command: 'pool_by_token', description: 'Find pools containing a specific token' }
     ]);
 
     // Listen for commands
@@ -37,6 +127,7 @@ export function initializeBot(token: string) {
     bot.onText(/\/pools_list/, (msg) => handlePoolsListCommand(bot, msg));
     bot.onText(/\/pool_by_id/, (msg) => handlePoolByIdCommand(bot, msg));
     bot.onText(/\/pool_by_token/, (msg) => handlePoolByTokenCommand(bot, msg));
+    bot.onText(/\/my_positions/, (msg) => handleMyPositionsCommand(bot, msg));
     bot.onText(/^\/(\d+)$/, (msg, match) => handlePoolNumberCommand(bot, msg, match));
 
     // Handle callback queries
@@ -54,8 +145,13 @@ export function initializeBot(token: string) {
         let ackText = 'Processing...';
 
         try {
+            // Handle LP-related callbacks
+            if (query.data?.startsWith('lp_single_')) {
+                await handleSingleSidedLPCallback(bot, query);
+                ackText = 'Starting LP setup...';
+            }
             // Handle wallet-related callbacks
-            if (query.data === 'export_private_key') {
+            else if (query.data === 'export_private_key') {
                 const user = await userStore.getUser(userId);
                 if (user && user.encryptedPrivateKey) {
                     try {
@@ -112,21 +208,98 @@ export function initializeBot(token: string) {
                 ackText = 'Pool action processed.';
             }
         } catch (error) {
-            console.error(`Error handling callback query (${query.data}) for user ${userId}:`, error);
-            ackText = 'An error occurred.';
+            console.error('Error handling callback query:', error);
+            ackText = 'Error processing request.';
         }
 
-        // Acknowledge the callback
-        await bot.answerCallbackQuery(query.id, { text: ackText });
+        if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: ackText });
+        }
     });
 
+    // Handle text messages for LP setup
+    bot.on('message', async (msg) => {
+        if (!msg.text) return;
+
+        const chatId = msg.chat.id;
+        const userId = msg.from?.id.toString();
+
+        if (!userId) return;
+
+        try {
+            // Handle LP setup commands
+            if (msg.text === '/confirm') {
+                await handleConfirmation(bot, msg);
+            } else if (msg.text === '/cancel') {
+                await handleCancellation(bot, msg);
+            } else {
+                // Handle numeric inputs for LP setup
+                await handleAmountInput(bot, msg);
+                await handleUpperPriceInput(bot, msg);
+            }
+        } catch (error) {
+            console.error('Error handling message:', error);
+            await bot.sendMessage(chatId, '❌ An error occurred while processing your message.');
+        }
+    });
+
+    // Handle polling errors
     bot.on('polling_error', (error: Error) => {
         console.error('Polling error:', error.message);
+
+        if (error.message.includes('409 Conflict')) {
+            isShuttingDown = true;
+            console.log('Conflict detected, stopping polling...');
+
+            bot.stopPolling().catch(err => {
+                console.error('Error stopping polling:', err);
+            }).finally(() => {
+                if (retryCount < MAX_RETRIES) {
+                    retryCount++;
+                    console.log(`Attempting to restart polling in ${RETRY_DELAY_MS / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})...`);
+
+                    // Clear any existing timer
+                    if (pollingRestartTimer) {
+                        clearTimeout(pollingRestartTimer);
+                    }
+
+                    // Set a new timer for restart
+                    pollingRestartTimer = setTimeout(() => {
+                        console.log('Restarting polling...');
+                        botInstance = null;
+                        initializeBot(token);
+                    }, RETRY_DELAY_MS);
+                } else {
+                    console.error(`Failed to resolve conflict after ${MAX_RETRIES} attempts. Bot stopped.`);
+                    cleanupResources();
+                }
+            });
+        }
+    });
+    bot.on('webhook_error', (error) => {
+        console.error('Webhook error:', error.message);
     });
 
-    console.log('Telegram Bot polling started...');
+    // Add error handler for general bot errors
+    bot.on('error', (error) => {
+        console.error('Bot error:', error.message);
+    });
+    // Start polling
+    startBotPolling(bot);
+
+    process.on('SIGINT', () => shutdownBot(bot));
+    process.on('SIGTERM', () => shutdownBot(bot));
 
     return bot;
+}
+function shutdownBot(bot: TelegramBot) {
+    console.log('Shutting down bot...');
+    isPolling = false;
+    bot.stopPolling().catch(err => {
+        console.error('Error stopping polling during shutdown:', err);
+    });
+    console.log('Bot shutdown complete');
+    process.exit(0);
 }
 
 export class Bot {

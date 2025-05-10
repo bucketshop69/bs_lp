@@ -1,5 +1,6 @@
 import { CLMM_PROGRAM_ID, DEVNET_PROGRAM_ID, Raydium } from "@raydium-io/raydium-sdk-v2"
 import { clusterApiUrl, Connection, Keypair } from "@solana/web3.js"
+import { getUserKeypair } from "../getUserWallet"
 
 export const initSdk = async (params: { owner: Keypair, loadToken?: boolean, }) => {
 
@@ -24,3 +25,11 @@ export const initSdk = async (params: { owner: Keypair, loadToken?: boolean, }) 
 
 const VALID_PROGRAM_ID = new Set([CLMM_PROGRAM_ID.toBase58(), DEVNET_PROGRAM_ID.CLMM.toBase58()])
 export const isValidClmm = (id: string) => VALID_PROGRAM_ID.has(id)
+
+
+export async function getPoolInfo(poolId: string, userId: string) {
+    const raydium = await initSdk({ owner: await getUserKeypair(userId) })
+    if (!raydium) return
+    const poolInfo = await raydium.clmm.getRpcClmmPoolInfo({ poolId: poolId })
+    return poolInfo
+}

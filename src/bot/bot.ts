@@ -12,7 +12,7 @@ import { SqliteUserStore } from '../storage/sqliteUserStore';
 import { decrypt } from '../utils/encryption';
 import { getSolBalance } from '../solana/utils';
 import { getWalletKeyboard } from './keyboards';
-import { handleSingleSidedLPCallback, handleAmountInput, handleUpperPriceInput, handleConfirmation, handleCancellation } from './commands/lpCommands';
+import { handleSingleSidedLPCallback, handleAmountInput, handleUpperPriceInput, handleConfirmation, handleCancellation, lpStates } from './commands/lpCommands';
 import { harvestPositionRewards } from '../services/raydiumClmm/claimFees';
 import { fetchAllPositionsInfo } from '../services/raydiumClmm/myPosition';
 
@@ -118,9 +118,9 @@ export function initializeBot(token: string) {
         { command: 'wallet', description: 'View your wallet information' },
         // { command: 'swap', description: 'Swap tokens using Jupiter' },
         { command: 'pools_list', description: 'List all available Raydium CLMM pools' },
-        { command: 'pool_by_id', description: 'Get details for a specific pool' },
+        // { command: 'pool_by_id', description: 'Get details for a specific pool' },
         { command: 'my_positions', description: 'View your Raydium CLMM positions' },
-        { command: 'close_position', description: 'Close a specific Raydium CLMM position' },
+        // { command: 'close_position', description: 'Close a specific Raydium CLMM position' },
         // { command: 'pool_by_token', description: 'Find pools containing a specific token' }
     ]);
 
@@ -129,8 +129,8 @@ export function initializeBot(token: string) {
     bot.onText(/\/wallet/, (msg) => handleWalletCommand(bot, msg));
     bot.onText(/\/swap/, (msg) => handleSwapCommand(bot, msg));
     bot.onText(/\/pools_list/, (msg) => handlePoolsListCommand(bot, msg));
-    bot.onText(/\/pool_by_id/, (msg) => handlePoolByIdCommand(bot, msg));
-    bot.onText(/\/pool_by_token/, (msg) => handlePoolByTokenCommand(bot, msg));
+    // bot.onText(/\/pool_by_id/, (msg) => handlePoolByIdCommand(bot, msg));
+    // bot.onText(/\/pool_by_token/, (msg) => handlePoolByTokenCommand(bot, msg));
     bot.onText(/\/my_positions/, (msg) => handleMyPositionsCommand(bot, msg));
     bot.onText(/\/close_position/, (msg) => handleClosePositionCommand(bot, msg));
     bot.onText(/^\/(\d+)$/, (msg, match) => handlePoolNumberCommand(bot, msg, match));
@@ -164,9 +164,9 @@ export function initializeBot(token: string) {
                 ackText = `Closing position ${positionNumber}...`;
             }
             // Handle LP-related callbacks
-            else if (query.data?.startsWith('lp_single_')) {
+            else if (query.data?.startsWith('lp_single_') || query.data?.startsWith('lp_token_')) {
                 await handleSingleSidedLPCallback(bot, query);
-                ackText = 'Starting LP setup...';
+                ackText = 'Processing LP setup...';
             }
             // Handle wallet-related callbacks
             else if (query.data === 'export_private_key') {
@@ -278,9 +278,17 @@ export function initializeBot(token: string) {
             } else if (msg.text === '/cancel') {
                 await handleCancellation(bot, msg);
             } else {
-                // Handle numeric inputs for LP setup
-                await handleAmountInput(bot, msg);
-                await handleUpperPriceInput(bot, msg);
+                // Get the current state to determine which handler to call
+                const state = lpStates.get(userId);
+
+                if (state) {
+                    // Call only the relevant handler based on the current step
+                    if (state.currentStep === 'amount') {
+                        await handleAmountInput(bot, msg);
+                    } else if (state.currentStep === 'upperPrice') {
+                        await handleUpperPriceInput(bot, msg);
+                    }
+                }
             }
         } catch (error) {
             console.error('Error handling message:', error);

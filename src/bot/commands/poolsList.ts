@@ -11,8 +11,19 @@ interface PoolsListState {
     lastUpdate: number;
 }
 
+interface LpSetupState {
+    userId: string;
+    chatId: number;
+    poolId: string;
+    step: 'awaitingTokenSelection' | 'awaitingAmount';
+    selectedTokenMint?: string; // Mint address of the token chosen for single LP
+    selectedTokenSymbol?: string; // Symbol of the token chosen
+    messageIdToEdit: number; // The ID of the message we are editing (pool options/token selection/amount prompt)
+}
+
 // Store user states for pagination
 const userStates = new Map<string, PoolsListState>();
+const activeLpSetups = new Map<string, LpSetupState>(); // Map<userId, LpSetupState>
 const POOLS_PER_PAGE = 5;
 const poolsPageState = new Map<number, number>();
 
@@ -177,81 +188,198 @@ export async function handlePoolsCallback(
     if (!chatId || !userId || !data || !messageId) return;
 
     const state = userStates.get(userId);
-    if (!state) {
-        await bot.answerCallbackQuery(query.id, {
-            text: 'Session expired. Please use /pools_list again.',
-            show_alert: true
-        });
-        return;
-    }
+    // Note: Not all callbacks require `state`. LpSetup might use a different state.
 
     try {
-        // Handle page navigation
+        // Handle page navigation for pools list
         if (data.startsWith('pools_page_')) {
-            // Show loading indicator
-            await bot.answerCallbackQuery(query.id, {
-                text: '📊 Loading new page...'
-            });
-
-            const newPage = parseInt(data.split('_')[2]);
-
-            // Validate page number
-            if (newPage < 1 || newPage > state.totalPages) {
+            if (!state) {
                 await bot.answerCallbackQuery(query.id, {
-                    text: '❌ Invalid page number',
+                    text: 'Session expired. Please use /pools_list again.',
                     show_alert: true
                 });
                 return;
             }
-
-            // Update page state
+            await bot.answerCallbackQuery(query.id, { text: '📊 Loading new page...' });
+            const newPage = parseInt(data.split('_')[2]);
+            if (newPage < 1 || newPage > state.totalPages) {
+                await bot.answerCallbackQuery(query.id, { text: '❌ Invalid page number', show_alert: true });
+                return;
+            }
             state.currentPage = newPage;
             poolsPageState.set(chatId, newPage);
-
-            // Update message with new page
-            const message = formatPoolsMessage(state.pools, newPage, state.totalPages);
+            const messageText = formatPoolsMessage(state.pools, newPage, state.totalPages);
             const keyboard = createPoolsKeyboard(state.pools, newPage, state.totalPages);
-
-            await bot.editMessageText(message, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                reply_markup: keyboard
+            await bot.editMessageText(messageText, {
+                chat_id: chatId, message_id: messageId, parse_mode: 'HTML', reply_markup: keyboard
             });
         }
         // Handle current page click (do nothing)
         else if (data === 'pools_current_page') {
             await bot.answerCallbackQuery(query.id);
         }
-        // Handle pool selection
+        // Handle pool selection (navigating to pool details)
         else if (data.startsWith('select_pool_')) {
-            await bot.answerCallbackQuery(query.id, {
-                text: 'Loading pool details...'
-            });
-
+            await bot.answerCallbackQuery(query.id, { text: 'Loading pool details...' });
             const poolId = data.replace('select_pool_', '');
-            await handlePoolSelection(bot, chatId, poolId);
+            // We should clear any active LP setup if user selects a new pool directly
+            activeLpSetups.delete(userId);
+            await handlePoolSelection(bot, chatId, poolId, messageId); // Pass messageId to edit it
         }
-        // Handle back to pools list
+        // Handle 'Back to List' from pool details view
         else if (data === 'pools_back') {
-            await bot.answerCallbackQuery(query.id, {
-                text: 'Returning to pools list...'
-            });
-
-            // Get current page
+            if (!state) {
+                await bot.answerCallbackQuery(query.id, {
+                    text: 'Session expired. Please use /pools_list again.',
+                    show_alert: true
+                });
+                return;
+            }
+            await bot.answerCallbackQuery(query.id, { text: 'Returning to pools list...' });
+            activeLpSetups.delete(userId); // Clear any LP setup state
             const currentPage = poolsPageState.get(chatId) || 1;
-
-            // Update message with pools list
-            const message = formatPoolsMessage(state.pools, currentPage, state.totalPages);
+            const messageText = formatPoolsMessage(state.pools, currentPage, state.totalPages);
             const keyboard = createPoolsKeyboard(state.pools, currentPage, state.totalPages);
-
-            await bot.editMessageText(message, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                reply_markup: keyboard
+            await bot.editMessageText(messageText, {
+                chat_id: chatId, message_id: messageId, parse_mode: 'HTML', reply_markup: keyboard
             });
         }
+        // Handle 'Single-Sided LP' button click - Step 1: Show token selection
+        else if (data.startsWith('lp_single_')) {
+            const poolId = data.replace('lp_single_', '');
+
+            await bot.answerCallbackQuery(query.id, { text: 'Loading token options...' });
+            try {
+                const [poolDetails] = await getPoolDetails([poolId]);
+                if (!poolDetails) {
+                    await bot.editMessageText('❌ Pool details not found. Please try again.', { chat_id: chatId, message_id: messageId });
+                    return;
+                }
+
+                // Ensure mintA and mintB have address and symbol
+                if (!poolDetails.mintA?.address || !poolDetails.mintA?.symbol || !poolDetails.mintB?.address || !poolDetails.mintB?.symbol) {
+                    console.error('Pool details missing mint information (address/symbol):', poolDetails);
+                    await bot.editMessageText('❌ Pool data is incomplete. Cannot proceed.', { chat_id: chatId, message_id: messageId });
+                    return;
+                }
+
+                activeLpSetups.set(userId, {
+                    userId,
+                    chatId,
+                    poolId,
+                    step: 'awaitingTokenSelection',
+                    messageIdToEdit: messageId
+                });
+
+                const tokenSelectionMessage = `🔍 <b>${poolDetails.mintA.symbol}/${poolDetails.mintB.symbol} Pool</b>
+
+Please select the token you wish to provide for single-sided liquidity:`;
+                const tokenSelectionKeyboard = createSingleLpTokenSelectionKeyboard(poolId,
+                    { id: poolDetails.mintA.address, symbol: poolDetails.mintA.symbol },
+                    { id: poolDetails.mintB.address, symbol: poolDetails.mintB.symbol }
+                );
+
+                await bot.editMessageText(tokenSelectionMessage, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML',
+                    reply_markup: tokenSelectionKeyboard
+                });
+            } catch (error) {
+                console.error('Error in lp_single_ handler:', error);
+                await bot.editMessageText('❌ Error fetching pool details for LP. Please try again.', { chat_id: chatId, message_id: messageId });
+            }
+        }
+        // Handle token selection for Single-Sided LP - Step 2: Ask for amount
+        else if (data.startsWith('lp_select_token_')) {
+            const parts = data.split('_'); // lp_select_token_poolId_tokenId_tokenSymbol
+            const poolId = parts[3];
+            const selectedTokenMint = parts[4];
+            const selectedTokenSymbol = parts[5];
+
+            const lpState = activeLpSetups.get(userId);
+            if (!lpState || lpState.poolId !== poolId || lpState.step !== 'awaitingTokenSelection') {
+                await bot.answerCallbackQuery(query.id, { text: 'Invalid action or session expired. Please start over.', show_alert: true });
+                // Optionally, try to revert to pool options or list if messageId is known
+                return;
+            }
+            await bot.answerCallbackQuery(query.id, { text: `Selected ${selectedTokenSymbol}. Please wait...` });
+
+            try {
+                const [poolDetails] = await getPoolDetails([poolId]); // Fetch again for latest price
+                if (!poolDetails) {
+                    await bot.editMessageText('❌ Pool details not found. Please try again.', { chat_id: chatId, message_id: lpState.messageIdToEdit });
+                    activeLpSetups.delete(userId);
+                    return;
+                }
+
+                lpState.step = 'awaitingAmount';
+                lpState.selectedTokenMint = selectedTokenMint;
+                lpState.selectedTokenSymbol = selectedTokenSymbol;
+                activeLpSetups.set(userId, lpState);
+
+                // Using pool.price (assuming it's a number) and toString() for full precision as seen in screenshot
+                const currentPriceStr = typeof poolDetails.price === 'number' ? poolDetails.price.toString() : poolDetails.price;
+
+                const amountPromptMessage =
+                    `💧 <b>Single-Sided LP Setup for ${selectedTokenSymbol}</b>
+
+` +
+                    `Pool: ${poolDetails.mintA.symbol}/${poolDetails.mintB.symbol}
+` +
+                    `Please enter the amount of <b>${selectedTokenSymbol}</b> you want to provide as liquidity.
+
+` +
+                    `Current pool price: $${currentPriceStr}
+
+` +
+                    `Use /cancel to cancel this operation.`;
+
+                await bot.editMessageText(amountPromptMessage, {
+                    chat_id: chatId,
+                    message_id: lpState.messageIdToEdit,
+                    parse_mode: 'HTML',
+                    reply_markup: { inline_keyboard: [[{ text: '⬅️ Back to Token Selection', callback_data: `lp_single_${poolId}` }]] } // Option to go back to token selection
+                });
+            } catch (error) {
+                console.error('Error in lp_select_token_ handler:', error);
+                await bot.editMessageText('❌ Error preparing LP amount input. Please try again.', { chat_id: chatId, message_id: lpState.messageIdToEdit });
+                activeLpSetups.delete(userId);
+            }
+        }
+        // Handle 'Back to Options' from token selection screen
+        else if (data.startsWith('lp_back_to_options_')) {
+            const poolId = data.replace('lp_back_to_options_', '');
+            const lpState = activeLpSetups.get(userId);
+            if (!lpState || lpState.poolId !== poolId) { // Check if there's an active setup for this pool
+                // If no state, or state is for different pool, maybe just try to show options if possible
+                // but safer to assume we need to go back to a known state.
+                // For now, just log and perhaps send a generic message if messageId unknown.
+            }
+
+            await bot.answerCallbackQuery(query.id, { text: 'Returning to pool options...' });
+            activeLpSetups.delete(userId); // Clear the LP setup state
+
+            try {
+                const [poolDetails] = await getPoolDetails([poolId]);
+                if (!poolDetails) {
+                    await bot.editMessageText('❌ Pool details not found. Please try again.', { chat_id: chatId, message_id: messageId });
+                    return;
+                }
+                const originalMessage = formatPoolDetails(poolDetails);
+                const originalKeyboard = createPoolOptionsKeyboard(poolId);
+                await bot.editMessageText(originalMessage, {
+                    chat_id: chatId,
+                    message_id: messageId, // Use the current messageId from the query
+                    parse_mode: 'HTML',
+                    reply_markup: originalKeyboard
+                });
+            } catch (error) {
+                console.error('Error in lp_back_to_options_ handler:', error);
+                await bot.editMessageText('❌ Error returning to pool options. Please try again.', { chat_id: chatId, message_id: messageId });
+            }
+        }
+
     } catch (error) {
         console.error('Error handling pools callback:', error);
         await bot.answerCallbackQuery(query.id, {
@@ -264,25 +392,43 @@ export async function handlePoolsCallback(
 async function handlePoolSelection(
     bot: TelegramBot,
     chatId: number,
-    poolId: string
+    poolId: string,
+    messageIdToUpdate?: number // Optional: if we want to edit an existing message
 ): Promise<void> {
     try {
         const [poolDetails] = await getPoolDetails([poolId]);
         if (!poolDetails) {
-            await bot.sendMessage(chatId, '❌ Pool not found.');
+            if (messageIdToUpdate) {
+                await bot.editMessageText('❌ Pool not found.', { chat_id: chatId, message_id: messageIdToUpdate });
+            } else {
+                await bot.sendMessage(chatId, '❌ Pool not found.');
+            }
             return;
         }
 
         const message = formatPoolDetails(poolDetails);
         const keyboard = createPoolOptionsKeyboard(poolDetails.id);
 
-        await bot.sendMessage(chatId, message, {
-            parse_mode: 'HTML',
-            reply_markup: keyboard
-        });
+        if (messageIdToUpdate) {
+            await bot.editMessageText(message, {
+                chat_id: chatId,
+                message_id: messageIdToUpdate,
+                parse_mode: 'HTML',
+                reply_markup: keyboard
+            });
+        } else {
+            await bot.sendMessage(chatId, message, {
+                parse_mode: 'HTML',
+                reply_markup: keyboard
+            });
+        }
     } catch (error) {
         console.error('Error handling pool selection:', error);
-        await bot.sendMessage(chatId, '❌ Error fetching pool details. Please try again.');
+        if (messageIdToUpdate) {
+            await bot.editMessageText('❌ Error fetching pool details. Please try again.', { chat_id: chatId, message_id: messageIdToUpdate });
+        } else {
+            await bot.sendMessage(chatId, '❌ Error fetching pool details. Please try again.');
+        }
     }
 }
 
@@ -305,6 +451,24 @@ function createPoolOptionsKeyboard(poolId: string): TelegramBot.InlineKeyboardMa
             ],
             [
                 { text: 'Back to List', callback_data: 'pools_back' }
+            ]
+        ]
+    };
+}
+
+function createSingleLpTokenSelectionKeyboard(
+    poolId: string,
+    tokenA: { id: string; symbol: string },
+    tokenB: { id: string; symbol: string }
+): TelegramBot.InlineKeyboardMarkup {
+    return {
+        inline_keyboard: [
+            [
+                { text: `Provide ${tokenA.symbol}`, callback_data: `lp_select_token_${poolId}_${tokenA.id}_${tokenA.symbol}` },
+                { text: `Provide ${tokenB.symbol}`, callback_data: `lp_select_token_${poolId}_${tokenB.id}_${tokenB.symbol}` }
+            ],
+            [
+                { text: '⬅️ Back to Options', callback_data: `lp_back_to_options_${poolId}` }
             ]
         ]
     };

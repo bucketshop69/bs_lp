@@ -67,9 +67,7 @@ export async function handleStartCommand(bot: TelegramBot, msg: TelegramBot.Mess
             `Welcome ${userName}! 👋\n\n` +
             `Your Solana wallet:\n` +
             `Address: \`${walletAddress}\`\n\n` +
-            `Use /help to see available commands.\n` +
-            `Use /wallet to manage your wallet.\n` +
-            `Use /lp to manage your liquidity positions.`,
+            `Use /wallet to manage your wallet.\n`,
             { parse_mode: 'Markdown', reply_markup: keyboard }
         );
 

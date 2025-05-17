@@ -162,13 +162,26 @@ The bot provides comprehensive monitoring through:
 
 ## 🔐 Security Considerations
 
-- Never share your private keys
-- Use environment variables for sensitive data
-- Implement proper error handling
-- Regular security audits
-- Backup your database regularly
+The application implements the following security measures:
 
-## 🤝 Contributing
+- Wallet private keys are encrypted using AES-256-GCM before storage
+- Sensitive configuration like encryption keys are managed through environment variables
+- SQLite database stores user and wallet information persistently
+
+For optimal security when using this application, we recommend:
+- Using a dedicated wallet with limited funds for automated trading
+- Monitoring the Telegram notifications for any unusual activity
+- Setting appropriate trading limits within your risk tolerance
+
+### Wallet Implementation
+
+The wallet system works as follows:
+- When a user first starts the bot, a new Solana wallet is generated
+- The wallet's private key is encrypted before being stored in the database
+- On subsequent starts, the application retrieves and decrypts the existing wallet
+- This ensures your funds remain accessible across application restarts
+
+## 📝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 

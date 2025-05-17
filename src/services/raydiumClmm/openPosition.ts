@@ -4,7 +4,7 @@ import Decimal from 'decimal.js'
 import { getUserKeypair } from '../getUserWallet';
 import { isValidClmm } from './raydiumUtil';
 import { initSdk } from './raydiumUtil';
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, getAccount } from '@solana/spl-token';
 import { PublicKey, Transaction, sendAndConfirmTransaction, Connection } from '@solana/web3.js';
 
 interface CreatePositionParams {
@@ -30,14 +30,19 @@ export const createPosition = async ({
     userId,
     selectedTokenMint
 }: CreatePositionParams) => {
+    // Input validation
     if (!userId) throw new Error('userId is required')
+    if (!poolId) throw new Error('poolId is required')
+    if (inputAmount <= 0) throw new Error('inputAmount must be greater than 0')
+    if (endPrice <= 0) throw new Error('endPrice must be greater than 0')
+
     console.log(`Starting position creation for user: ${userId}, pool: ${poolId}`)
 
     const userKeypair = await getUserKeypair(userId)
     console.log(`User wallet address: ${userKeypair.publicKey.toString()}`)
 
     const raydium = await initSdk({ owner: userKeypair })
-    if (!raydium) return
+    if (!raydium) throw new Error('Failed to initialize Raydium SDK')
 
     console.log(`SDK initialized on ${raydium.cluster}`)
 
@@ -47,8 +52,9 @@ export const createPosition = async ({
     if (raydium.cluster === 'mainnet') {
         console.log(`Fetching mainnet pool info for poolId: ${poolId}`)
         const data = await raydium.api.fetchPoolById({ ids: poolId })
+        if (!data || data.length === 0) throw new Error(`Pool with ID ${poolId} not found`)
         poolInfo = data[0] as ApiV3PoolInfoConcentratedItem
-        if (!isValidClmm(poolInfo.programId)) throw new Error('target pool is not CLMM pool')
+        if (!isValidClmm(poolInfo.programId)) throw new Error('Target pool is not a CLMM pool')
     } else {
         console.log(`Fetching devnet pool info for poolId: ${poolId}`)
         const data = await raydium.clmm.getPoolInfoFromRpc(poolId)
@@ -58,9 +64,6 @@ export const createPosition = async ({
 
     console.log(`Pool tokens: ${poolInfo.mintA.symbol}/${poolInfo.mintB.symbol}`)
     console.log(`Pool token addresses: ${poolInfo.mintA.address} / ${poolInfo.mintB.address}`)
-
-    // Check for token accounts using connection directly
-    console.log(`Checking token accounts for user...`);
 
     // Function to check and create token account if needed
     async function ensureTokenAccount(mintAddress: string, tokenSymbol: string): Promise<boolean> {
@@ -120,11 +123,12 @@ export const createPosition = async ({
     const tokenACreated = await ensureTokenAccount(poolInfo.mintA.address, poolInfo.mintA.symbol);
     const tokenBCreated = await ensureTokenAccount(poolInfo.mintB.address, poolInfo.mintB.symbol);
 
+    // Abort if token accounts couldn't be created
     if (!tokenACreated || !tokenBCreated) {
-        console.error("Failed to ensure token accounts exist. Position creation may fail.");
-    } else {
-        console.log("All required token accounts are ready.");
+        throw new Error("Failed to ensure token accounts exist. Cannot proceed with position creation.");
     }
+
+    console.log("All required token accounts are ready.");
 
     const rpcData = await raydium.clmm.getRpcClmmPoolInfo({ poolId: poolInfo.id })
     poolInfo.price = rpcData.currentPrice
@@ -164,40 +168,56 @@ export const createPosition = async ({
 
     console.log(`FINAL SELECTION: Using ${base} as base token: ${tokenToUse.symbol} (${tokenToUse.address})`);
 
-    const [priceStart, priceEnd] = [startPrice ?? currentPrice, endPrice]
-    console.log(`Price range: ${priceStart} - ${priceEnd}`);
+    // Check user balance for selected token
+    await checkUserBalance(raydium, userKeypair.publicKey, tokenToUse, inputAmount);
 
-    const { tick: lowerTick } = TickUtils.getPriceAndTick({
+    // Handle start price and validate price range
+    let priceStart = startPrice ?? currentPrice;
+    if (priceStart === endPrice) {
+        throw new Error('Start price and end price cannot be the same');
+    }
+
+    console.log(`Price range: ${priceStart} - ${endPrice}`);
+
+    // Calculate lower and upper ticks from prices
+    const { tick: tickAtStartPrice } = TickUtils.getPriceAndTick({
         poolInfo,
         price: new Decimal(priceStart),
         baseIn: true,
-    })
+    });
 
-    const { tick: upperTick } = TickUtils.getPriceAndTick({
+    const { tick: tickAtEndPrice } = TickUtils.getPriceAndTick({
         poolInfo,
-        price: new Decimal(priceEnd),
+        price: new Decimal(endPrice),
         baseIn: true,
-    })
+    });
 
-    const epochInfo = await raydium.fetchEpochInfo()
+    // Sort ticks properly
+    const lowerTick = Math.min(tickAtStartPrice, tickAtEndPrice);
+    const upperTick = Math.max(tickAtStartPrice, tickAtEndPrice);
+
+    const epochInfo = await raydium.fetchEpochInfo();
 
     const inputTokenDecimals = tokenToUse.decimals;
     const inputA = useTokenA;
+
+    // Never use 0 as fallback for input amount - we've already validated it's > 0
+    const inputAmountBN = new BN(new Decimal(inputAmount).mul(10 ** inputTokenDecimals).toFixed(0));
 
     const res = await PoolUtils.getLiquidityAmountOutFromAmountIn({
         poolInfo,
         slippage,
         inputA,
-        tickUpper: Math.max(lowerTick, upperTick),
-        tickLower: Math.min(lowerTick, upperTick),
-        amount: new BN(new Decimal(inputAmount || '0').mul(10 ** inputTokenDecimals).toFixed(0)),
+        tickUpper: upperTick,
+        tickLower: lowerTick,
+        amount: inputAmountBN,
         add: true,
         amountHasFee: true,
         epochInfo: epochInfo,
-    })
+    });
     console.log(`Liquidity calculation result:`, res);
 
-    const baseAmount = new BN(new Decimal(inputAmount || '0').mul(10 ** inputTokenDecimals).toFixed(0));
+    const baseAmount = inputAmountBN;
     const otherAmountMax = inputA ? res.amountSlippageB.amount : res.amountSlippageA.amount;
 
     console.log(`Opening position with params:`, {
@@ -205,8 +225,8 @@ export const createPosition = async ({
         base,
         baseAmount: baseAmount.toString(),
         otherAmountMax: otherAmountMax.toString(),
-        tickLower: Math.min(lowerTick, upperTick),
-        tickUpper: Math.max(lowerTick, upperTick),
+        tickLower: lowerTick,
+        tickUpper: upperTick,
     });
 
     try {
@@ -219,8 +239,8 @@ export const createPosition = async ({
         const { execute, extInfo } = await raydium.clmm.openPositionFromBase({
             poolInfo,
             poolKeys,
-            tickUpper: Math.max(lowerTick, upperTick),
-            tickLower: Math.min(lowerTick, upperTick),
+            tickUpper: upperTick,
+            tickLower: lowerTick,
             base,
             ownerInfo: {
                 useSOLBalance: true,
@@ -243,15 +263,78 @@ export const createPosition = async ({
         if (error instanceof Error) {
             console.error('Simulation logs:', error.message)
 
-            // Additional debug for token account error
+            // Enhanced error handling for common issues
             if (error.message.includes("cannot found target token accounts")) {
-                console.error('TOKEN ACCOUNT ERROR: User is missing required token accounts')
-                console.error('This typically happens when the user has not created a token account for one of the tokens in the pool')
-                console.error(`Required token accounts: ${poolInfo.mintA.symbol} (${poolInfo.mintA.address}), ${poolInfo.mintB.symbol} (${poolInfo.mintB.address})`)
-                console.error('Suggestion: Create token accounts for both tokens before opening a position')
+                throw new Error(
+                    `Missing token accounts: User needs token accounts for ${poolInfo.mintA.symbol} (${poolInfo.mintA.address}) and ${poolInfo.mintB.symbol} (${poolInfo.mintB.address})`
+                );
+            }
+
+            if (error.message.includes("insufficient funds")) {
+                throw new Error(
+                    `Insufficient funds: User does not have enough ${tokenToUse.symbol} or SOL for transaction fees`
+                );
             }
         }
         throw error
+    }
+}
+
+// Helper function to check if user has sufficient balance
+async function checkUserBalance(
+    raydium: Raydium,
+    userPubkey: PublicKey,
+    token: { address: string, symbol: string, decimals: number },
+    requiredAmount: number
+): Promise<void> {
+    try {
+        // For SOL/WSOL, check native SOL balance
+        if (token.symbol === 'WSOL' || token.symbol === 'SOL') {
+            const solBalance = await raydium.connection.getBalance(userPubkey);
+            const solBalanceInSol = solBalance / 10 ** 9; // Convert lamports to SOL
+
+            // Increase the buffer for transaction fees - CLMM operations are complex
+            // Raydium CLMM transactions require more SOL than standard transactions
+            const solFeeBuffer = 0.003; // Increased from 0.001 to 0.003 SOL
+            const minimumSolRequired = requiredAmount + solFeeBuffer;
+
+            if (solBalanceInSol < minimumSolRequired) {
+                const additionalNeeded = minimumSolRequired - solBalanceInSol;
+                throw new Error(
+                    `Insufficient SOL balance. Need ${minimumSolRequired.toFixed(6)} SOL (${requiredAmount.toFixed(6)} for position + ${solFeeBuffer} for fees), ` +
+                    `but only have ${solBalanceInSol.toFixed(6)} SOL. ` +
+                    `Please add at least ${additionalNeeded.toFixed(6)} more SOL to continue.`
+                );
+            }
+
+            console.log(`SOL balance check passed: ${solBalanceInSol} SOL available for transaction requiring ~${minimumSolRequired} SOL`);
+            return;
+        }
+
+        // For other tokens, check token account balance
+        const tokenMint = new PublicKey(token.address);
+        const tokenAccount = await getAssociatedTokenAddress(tokenMint, userPubkey);
+
+        try {
+            const accountInfo = await getAccount(raydium.connection, tokenAccount);
+            const tokenBalance = Number(accountInfo.amount) / 10 ** token.decimals;
+
+            if (tokenBalance < requiredAmount) {
+                throw new Error(
+                    `Insufficient ${token.symbol} balance. Required: ${requiredAmount}, Available: ${tokenBalance}. ` +
+                    `Please add more ${token.symbol} to continue.`
+                );
+            }
+
+            console.log(`${token.symbol} balance check passed: ${tokenBalance} available`);
+        } catch (e) {
+            throw new Error(`Failed to get ${token.symbol} balance: Token account may not exist`);
+        }
+    } catch (error) {
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error(`Failed to check balance: ${String(error)}`);
     }
 }
 

@@ -42,12 +42,6 @@ export async function getSolBalance(publicKeyString: string): Promise<number> {
     }
 }
 
-/**
- * Fetches token balance and information for a given token mint and wallet address
- * @param walletAddress The wallet address to check balance for
- * @param tokenMint The token mint address
- * @returns Promise containing the token balance and token information
- */
 export async function getTokenBalance(
     walletAddress: string,
     tokenMint: string
@@ -98,9 +92,3 @@ export async function getTokenBalance(
         throw new Error(`Failed to fetch token balance: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
-
-// Example usage:
-// const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-// const walletAddress = '4VNudN9D33nf6wXHpYbwiQkJPXSyFJ9VamA2GbzLD6d8';
-// const balance = await getTokenBalance(walletAddress, usdcMint);
-// console.log(`USDC Balance: ${balance.balance} ${balance.tokenInfo.symbol} (Raw: ${balance.rawAmount})`); 

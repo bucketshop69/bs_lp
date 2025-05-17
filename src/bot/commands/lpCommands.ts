@@ -423,6 +423,6 @@ export async function handleCancellation(
     // Send cancellation message with more detail
     await bot.sendMessage(
         chatId,
-        `✅ Operation cancelled: ${cancelledOperation}\n\nYou can start again with the /pools_list command or use /help to see all available commands.`
+        `✅ Operation cancelled: ${cancelledOperation}\n\nYou can start again with the /pools_list command or use /start to see all available commands.`
     );
 } 

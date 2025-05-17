@@ -447,7 +447,7 @@ function createPoolOptionsKeyboard(poolId: string): TelegramBot.InlineKeyboardMa
         inline_keyboard: [
             [
                 { text: 'Single-Sided LP', callback_data: `lp_single_${poolId}` },
-                { text: 'Dual-Sided LP', callback_data: `lp_dual_${poolId}` }
+                // { text: 'Dual-Sided LP', callback_data: `lp_dual_${poolId}` }
             ],
             [
                 { text: 'Back to List', callback_data: 'pools_back' }

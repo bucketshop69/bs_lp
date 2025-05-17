@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+  bs-lp-bot:
+    build: .
+    container_name: bs-lp-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SOLANA_NETWORK=${SOLANA_NETWORK:-mainnet-beta}
+    volumes:
+      - ./data:/app/data

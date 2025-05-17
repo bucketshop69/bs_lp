@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: bs-lp-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: SOLANA_NETWORK
+        value: mainnet-beta
+    # This ensures the service stays running and doesn't shut down due to inactivity
+    autoDeploy: true

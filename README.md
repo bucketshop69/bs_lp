@@ -2,6 +2,10 @@
 
 > A powerful, automated liquidity provider bot for Solana DEXes with real-time monitoring and control via Telegram.
 
+## Try it now!
+
+Try our Telegram bot: [@bs_lp_bot](https://t.me/bs_lp_bot)
+
 ## 📋 Overview
 
 This project implements an advanced automated liquidity provider bot that interacts with Solana DEXes (specifically Raydium) to provide liquidity and manage positions. The bot features a Telegram interface for real-time monitoring and control, making it easy to manage your liquidity positions from anywhere.

@@ -63,7 +63,7 @@ export async function handleClosePositionCommand(bot: TelegramBot, msg: Telegram
             });
 
             await bot.editMessageText(
-                `✅ Position closed successfully!\nTransaction: https://solscan.io/tx/${result.txId}`, {
+                `✅ Position closed successfully!\nTransaction: https://solscan.io/tx/${result.txId} \n\nUse /my_positions to view your positions. \n\n Use /wallet to manage your wallet.`, {
                 chat_id: chatId,
                 message_id: loadingMsg.message_id
             }

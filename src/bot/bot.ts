@@ -118,9 +118,8 @@ export function initializeBot(token: string) {
         { command: 'wallet', description: 'View your wallet information' },
         // { command: 'swap', description: 'Swap tokens using Jupiter' },
         { command: 'pools_list', description: 'List all available Raydium CLMM pools' },
-        // { command: 'pool_by_id', description: 'Get details for a specific pool' },
         { command: 'my_positions', description: 'View your Raydium CLMM positions' },
-        // { command: 'close_position', description: 'Close a specific Raydium CLMM position' },
+        // { command: 'pool_by_id', description: 'Get details for a specific pool' },
         // { command: 'pool_by_token', description: 'Find pools containing a specific token' }
     ]);
 

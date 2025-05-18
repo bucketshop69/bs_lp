@@ -54,33 +54,61 @@ function startBotPolling(bot: TelegramBot) {
         return;
     }
 
-    console.log('Starting Telegram Bot polling...');
-    bot.startPolling().then(() => {
-        isPolling = true;
-        console.log('Bot polling started successfully');
-    }).catch((error) => {
-        console.error('Error starting bot polling:', error);
-        isPolling = false;
-
-        // If it's a conflict error, try to stop and restart
-        if (error.response?.body?.error_code === 409 ||
-            (error.message && error.message.includes('409 Conflict'))) {
-            console.log('Bot already polling, attempting to stop and restart...');
-
-            bot.stopPolling().then(() => {
-                // Wait a bit before restarting
-                setTimeout(() => {
-                    bot.startPolling().then(() => {
-                        isPolling = true;
-                        console.log('Bot polling restarted successfully');
-                    }).catch(err => {
-                        console.error('Failed to restart polling:', err);
-                    });
-                }, 2000);
-            }).catch(stopErr => {
-                console.error('Failed to stop polling:', stopErr);
-            });
+    // Check for any existing webhook
+    bot.getWebHookInfo().then(info => {
+        if (info.url) {
+            console.log('Removing existing webhook before polling');
+            return bot.deleteWebHook();
         }
+    }).catch(err => {
+        console.error('Error checking webhook:', err);
+    }).finally(() => {
+        console.log('Starting Telegram Bot polling with safe parameters...');
+
+        // Set options for more stability
+        const pollingOptions = {
+            polling: {
+                interval: 2000,  // Longer interval
+                timeout: 60,     // Longer timeout
+                limit: 100,      // Fetch more updates
+                retryTimeout: 5000  // Wait longer between retries
+            }
+        };
+
+        // Start polling with better options
+        bot.startPolling(pollingOptions).then(() => {
+            isPolling = true;
+            console.log('Bot polling started successfully');
+        }).catch((error) => {
+            console.error('Error starting bot polling:', error);
+            isPolling = false;
+
+            // If it's a conflict error, wait longer before retry
+            if (error.response?.body?.error_code === 409 ||
+                (error.message && error.message.includes('409 Conflict'))) {
+                console.log('Bot already polling (conflict), waiting 15 seconds before retry...');
+
+                // Stop fully first
+                bot.stopPolling().then(() => {
+                    // Wait significantly longer before trying again
+                    setTimeout(() => {
+                        console.log('Attempting to restart polling after conflict...');
+                        cleanupResources(); // Ensure clean state
+
+                        // Create a fresh bot instance
+                        const token = process.env.BS_LP_TELEGRAM_BOT_TOKEN || '';
+                        if (token) {
+                            botInstance = null;
+                            initializeBot(token);
+                        } else {
+                            console.error('Cannot restart - missing token');
+                        }
+                    }, 15000); // 15 second delay
+                }).catch(stopErr => {
+                    console.error('Failed to stop polling:', stopErr);
+                });
+            }
+        });
     });
 }
 export function initializeBot(token: string) {
@@ -92,6 +120,24 @@ export function initializeBot(token: string) {
     if (isShuttingDown) {
         console.log('Bot is currently shutting down, waiting...');
         return null;
+    }
+
+    // If there's an existing bot instance, stop it properly before creating a new one
+    if (botInstance) {
+        console.log('Existing bot instance detected, stopping it first...');
+        try {
+            botInstance.stopPolling();
+            // Wait a moment to ensure polling has stopped
+            setTimeout(() => {
+                console.log('Previous bot instance stopped, continuing initialization...');
+                botInstance = null;
+                // Clean up resources
+                cleanupResources();
+            }, 2000);
+            return null;
+        } catch (err) {
+            console.error('Error stopping existing bot instance:', err);
+        }
     }
 
     // Clean up any existing bot instance
@@ -302,28 +348,40 @@ export function initializeBot(token: string) {
         if (error.message.includes('409 Conflict')) {
             isShuttingDown = true;
             console.log('Conflict detected, stopping polling...');
+            isPolling = false;
 
+            // Stop polling completely
             bot.stopPolling().catch(err => {
                 console.error('Error stopping polling:', err);
             }).finally(() => {
+                // Wait 10 seconds before any retry to ensure other instances have time to terminate
+                const conflictDelayMs = 10000;
+                console.log(`Waiting ${conflictDelayMs / 1000} seconds before attempting to restart...`);
+
+                // Clear any existing timer
+                if (pollingRestartTimer) {
+                    clearTimeout(pollingRestartTimer);
+                }
+
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
-                    console.log(`Attempting to restart polling in ${RETRY_DELAY_MS / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})...`);
+                    console.log(`Will attempt to restart polling (attempt ${retryCount}/${MAX_RETRIES})...`);
 
-                    // Clear any existing timer
-                    if (pollingRestartTimer) {
-                        clearTimeout(pollingRestartTimer);
-                    }
-
-                    // Set a new timer for restart
+                    // Set a new timer for restart with longer delay for conflicts
                     pollingRestartTimer = setTimeout(() => {
-                        console.log('Restarting polling...');
+                        console.log('Restarting polling with fresh instance...');
+                        // Ensure complete cleanup before retry
+                        cleanupResources();
                         botInstance = null;
-                        initializeBot(token);
-                    }, RETRY_DELAY_MS);
+                        // Use a new bot instance for next retry
+                        setTimeout(() => {
+                            initializeBot(token);
+                        }, 1000);
+                    }, conflictDelayMs);
                 } else {
                     console.error(`Failed to resolve conflict after ${MAX_RETRIES} attempts. Bot stopped.`);
                     cleanupResources();
+                    process.exit(1); // Exit with error code to trigger container restart
                 }
             });
         }

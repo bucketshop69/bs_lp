@@ -2,6 +2,9 @@
   "name": "bs_lp",
   "version": "1.0.0",
   "main": "index.js",
+  "engines": {
+    "node": ">=20.18.0"
+  },
   "scripts": {
     "build": "rimraf ./dist && tsc",
     "start": "npm run build && node dist/index.js",
